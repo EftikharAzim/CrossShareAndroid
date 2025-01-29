@@ -1,4 +1,4 @@
-package com.eftikharazim.crossshare
+package com.eftikharazim.crossshare.nsd
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -13,13 +13,14 @@ class NsdHelper(
     private val listener: OnDeviceDiscoveredListener
 ) {
     interface OnDeviceDiscoveredListener {
-        fun onDeviceDiscovered(deviceName: String, hostAddress: String)
+        fun onDeviceDiscovered(deviceName: String, hostAddress: String, port: Int) // 3 parameters
         fun onDeviceLost(deviceName: String)
     }
 
     private val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
     private val serviceType = "_fileshare._tcp."
     private val handlerThread = HandlerThread("NsdThread").apply { start() }
+
     // Declare listeners as class properties
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
@@ -38,12 +39,15 @@ class NsdHelper(
                 override fun onServiceRegistered(serviceInfo: NsdServiceInfo) {
                     Log.d("NSD", "Registered: ${serviceInfo.serviceName}")
                 }
+
                 override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, code: Int) {
                     Log.e("NSD", "Registration failed: $code")
                 }
+
                 override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) {
                     Log.e("NSD", "Unregistered: ${serviceInfo.serviceName}")
                 }
+
                 override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, code: Int) {
                     Log.e("NSD", "Unregistration failed: $code")
                 }
@@ -91,6 +95,7 @@ class NsdHelper(
                 override fun onServiceResolved(service: NsdServiceInfo) {
                     handleResolvedService(service)
                 }
+
                 override fun onResolveFailed(service: NsdServiceInfo, code: Int) {
                     Log.e("NSD", "Resolve failed: $code")
                 }
@@ -101,6 +106,7 @@ class NsdHelper(
                 override fun onServiceResolved(service: NsdServiceInfo) {
                     handleResolvedService(service)
                 }
+
                 override fun onResolveFailed(service: NsdServiceInfo, code: Int) {
                     Log.e("NSD", "Resolve failed: $code")
                 }
@@ -112,7 +118,7 @@ class NsdHelper(
         val hostAddress = service.host?.hostAddress ?: return
         // Skip Android devices (they start with "Android-")
         if (!service.serviceName.startsWith("Android-")) {
-            listener.onDeviceDiscovered(service.serviceName, hostAddress)
+            listener.onDeviceDiscovered(service.serviceName, hostAddress, service.port)
         }
     }
 
