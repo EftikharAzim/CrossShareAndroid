@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "CrossShare"
+rootProject.name = "CrossShareAndroid"
 include(":app")
