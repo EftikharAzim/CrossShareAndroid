@@ -7,6 +7,7 @@ local.properties
 
 # Log/OS Files
 *.log
+.DS_Store
 
 # Android Studio generated files and folders
 captures/
@@ -14,6 +15,8 @@ captures/
 .cxx/
 *.apk
 output.json
+release/
+debug/
 
 # IntelliJ
 *.iml
@@ -31,3 +34,12 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Backup files
+*.bak
+
+# Navigation editor temp files
+.navigation/
+
+# Android Studio captures folder
+captures/

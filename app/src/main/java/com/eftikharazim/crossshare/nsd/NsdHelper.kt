@@ -122,6 +122,17 @@ class NsdHelper(
         }
     }
 
+    fun stopDiscovery() {
+        discoveryListener?.let { listener ->
+            try {
+                nsdManager.stopServiceDiscovery(listener)
+            } catch (e: Exception) {
+                Log.e("NSD", "Error stopping discovery: ${e.message}")
+            }
+        }
+        discoveryListener = null
+    }
+
     fun tearDown() {
         registrationListener?.let { nsdManager.unregisterService(it) }
         discoveryListener?.let { nsdManager.stopServiceDiscovery(it) }
