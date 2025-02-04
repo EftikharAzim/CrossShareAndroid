@@ -20,6 +20,11 @@ import kotlin.math.log
 import kotlin.math.min
 
 class FileTransfer(private val context: Context) {
+    companion object {
+        private const val TAG = "FileTransfer"
+        private const val BUFFER_SIZE = 4096
+    }
+
     interface TransferListener {
         fun onProgress(percent: Int)
         fun onSuccess()
@@ -30,117 +35,144 @@ class FileTransfer(private val context: Context) {
 
     fun setTransferListener(listener: TransferListener) {
         transferListener = listener
+        Log.d(TAG, "Transfer listener set")
     }
 
     fun startServer(port: Int) {
+        Log.i(TAG, "Starting server on port: $port")
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 ServerSocket(port).use { serverSocket ->
+                    Log.d(TAG, "Server socket created successfully")
                     while (true) {
+                        Log.d(TAG, "Waiting for incoming connections...")
                         val socket = serverSocket.accept()
+                        Log.i(TAG, "Client connected from: ${socket.inetAddress.hostAddress}")
                         receiveFile(socket)
                     }
                 }
             } catch (e: IOException) {
-                Log.e("FileTransfer", "Server error: ${e.message}")
-                transferListener?.onError("Server error: ${e.message}")
+                val errorMsg = "Server error: ${e.message}"
+                Log.e(TAG, errorMsg, e)
+                transferListener?.onError(errorMsg)
             }
         }
     }
 
     fun sendFile(ip: String, port: Int, fileUri: Uri) {
+        Log.i(TAG, "Initiating file transfer to $ip:$port")
         CoroutineScope(Dispatchers.IO).launch {
             var socket: Socket? = null
             try {
-                // 1. Resolve URI to get file path and original name
+                Log.d(TAG, "Resolving file URI: $fileUri")
                 val (filePath, fileName) = getRealPathFromURI(fileUri)
                 val file = File(filePath)
 
                 if (!file.exists()) {
-                    throw IOException("File not found: $filePath")
+                    val errorMsg = "File not found: $filePath"
+                    Log.e(TAG, errorMsg)
+                    throw IOException(errorMsg)
                 }
+                Log.d(TAG, "File details - Name: $fileName, Size: ${file.length()} bytes")
 
-                // 2. Establish connection with timeout
+                Log.d(TAG, "Establishing connection to $ip:$port")
                 socket = Socket().apply {
-                    connect(InetSocketAddress(ip, port), 15000) // 15-second timeout
+                    connect(InetSocketAddress(ip, port), 15000)
                 }
+                Log.i(TAG, "Connected to receiver")
 
-                // 3. Send file with original filename
-                sendFileData(
-                    socket = socket!!,
-                    filePath = filePath,
-                    fileName = fileName
-                )
-
+                sendFileData(socket!!, filePath, fileName)
+                Log.i(TAG, "File sent successfully: $fileName")
                 transferListener?.onSuccess()
 
             } catch (e: Exception) {
-                Log.e("FileTransfer", "Send error", e)
-                transferListener?.onError("Send failed: ${e.message ?: "Unknown error"}")
+                val errorMsg = "Send failed: ${e.message ?: "Unknown error"}"
+                Log.e(TAG, errorMsg, e)
+                transferListener?.onError(errorMsg)
             } finally {
                 socket?.close()
+                Log.d(TAG, "Connection closed")
             }
         }
     }
 
     private fun sendFileData(socket: Socket, filePath: String, fileName: String) {
+        Log.d(TAG, "Starting to send file data for: $fileName")
         DataOutputStream(socket.getOutputStream()).use { dos ->
             val file = File(filePath)
 
-            // Send metadata: "filename.extension|filesize"
             val metadata = "$fileName|${file.length()}".toByteArray(Charsets.UTF_8)
-            dos.writeInt(metadata.size) // 4-byte length prefix
+            Log.v(TAG, "Sending metadata: ${metadata.size} bytes")
+            dos.writeInt(metadata.size)
             dos.write(metadata)
 
-            // Send file data
             FileInputStream(file).use { fis ->
-                val buffer = ByteArray(4096)
+                val buffer = ByteArray(BUFFER_SIZE)
                 var bytesRead: Int
+                var totalSent = 0L
+                val fileSize = file.length()
+
                 while (fis.read(buffer).also { bytesRead = it } != -1) {
                     dos.write(buffer, 0, bytesRead)
+                    totalSent += bytesRead
+                    val progress = ((totalSent.toDouble() / fileSize) * 100).toInt()
+                    Log.v(TAG, "Send progress: $progress% ($totalSent/$fileSize bytes)")
+                    updateProgress(totalSent, fileSize)
                 }
             }
+            Log.d(TAG, "File data sent successfully")
         }
     }
 
     private fun receiveFile(socket: Socket) {
+        Log.d(TAG, "Starting to receive file from: ${socket.inetAddress.hostAddress}")
         try {
             DataInputStream(socket.getInputStream()).use { dis ->
-                // 1. Read metadata length (4 bytes)
                 val metadataLength = dis.readInt()
+                Log.d(TAG, "Received metadata length: $metadataLength bytes")
 
-                // 2. Read metadata
                 val metadataBytes = ByteArray(metadataLength)
                 dis.readFully(metadataBytes)
                 val metadata = String(metadataBytes, Charsets.UTF_8)
-                val (fileName, fileSize) = metadata.split("|")
+                val (fileName, fileSize) = metadata.split("|") 
+                Log.i(TAG, "Receiving file: $fileName, size: $fileSize bytes")
 
-                // 3. Prepare output file
                 val downloadsDir = File(
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
                     "ReceivedFiles"
                 ).apply { mkdirs() }
 
-                FileOutputStream(File(downloadsDir, fileName)).use { fos ->
-                    // 4. Receive file in chunks
-                    val buffer = ByteArray(4096)
+                val outputFile = File(downloadsDir, fileName)
+                Log.d(TAG, "Saving file to: ${outputFile.absolutePath}")
+
+                FileOutputStream(outputFile).use { fos ->
+                    val buffer = ByteArray(BUFFER_SIZE)
                     var remaining = fileSize.toLong()
                     var totalReceived = 0L
 
                     while (remaining > 0) {
                         val bytesRead = dis.read(buffer, 0, min(buffer.size, remaining.toInt()))
-                        if (bytesRead == -1) break
+                        if (bytesRead == -1) {
+                            val errorMsg = "Unexpected end of stream"
+                            Log.e(TAG, errorMsg)
+                            throw IOException(errorMsg)
+                        }
 
                         fos.write(buffer, 0, bytesRead)
                         totalReceived += bytesRead
                         remaining -= bytesRead
+                        val progress = ((totalReceived.toDouble() / fileSize.toLong()) * 100).toInt()
+                        Log.v(TAG, "Receive progress: $progress% ($totalReceived/$fileSize bytes)")
                         updateProgress(totalReceived, fileSize.toLong())
                     }
                 }
+                Log.i(TAG, "File received successfully: $fileName")
                 transferListener?.onSuccess()
             }
         } catch (e: Exception) {
-            transferListener?.onError("Receive error: ${e.message}")
+            val errorMsg = "Receive error: ${e.message}"
+            Log.e(TAG, errorMsg, e)
+            transferListener?.onError(errorMsg)
         }
     }
 
@@ -148,24 +180,26 @@ class FileTransfer(private val context: Context) {
         val percent = ((current.toDouble() / total.toDouble()) * 100).toInt()
         transferListener?.onProgress(percent)
     }
+
     @Throws(IOException::class)
     private fun getRealPathFromURI(uri: Uri): Pair<String, String> {
-        // 1. Get original filename with extension (e.g., "photo.jpg")
+        Log.d(TAG, "Getting real path for URI: $uri")
         val fileName = getOriginalFileName(uri) ?: run {
-            // Fallback: Generate a unique name without .tmp
-            "file_${System.currentTimeMillis()}"
+            val generatedName = "file_${System.currentTimeMillis()}"
+            Log.w(TAG, "Original filename not found, using generated name: $generatedName")
+            generatedName
         }
 
-        // 2. Create a temporary file with the original name
         val tempFile = File(context.cacheDir, fileName).apply {
             createNewFile()
-            deleteOnExit() // Clean up later
+            deleteOnExit()
         }
+        Log.d(TAG, "Created temporary file: ${tempFile.absolutePath}")
 
-        // 3. Copy file content
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(tempFile).use { output ->
-                input.copyTo(output)
+                val copied = input.copyTo(output)
+                Log.d(TAG, "Copied $copied bytes to temporary file")
             }
         }
 
@@ -173,6 +207,7 @@ class FileTransfer(private val context: Context) {
     }
 
     private fun getOriginalFileName(uri: Uri): String? {
+        Log.v(TAG, "Attempting to get original filename for URI: $uri")
         return when (uri.scheme) {
             "content" -> {
                 context.contentResolver.query(
@@ -184,11 +219,18 @@ class FileTransfer(private val context: Context) {
                 )?.use { cursor ->
                     if (cursor.moveToFirst()) {
                         cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
-                    } else null
+                            .also { Log.d(TAG, "Found original filename: $it") }
+                    } else {
+                        Log.w(TAG, "No display name found in content resolver")
+                        null
+                    }
                 }
             }
-            "file" -> uri.lastPathSegment
-            else -> null
+            "file" -> uri.lastPathSegment?.also { Log.d(TAG, "Using last path segment as filename: $it") }
+            else -> {
+                Log.w(TAG, "Unsupported URI scheme: ${uri.scheme}")
+                null
+            }
         }
     }
 }
